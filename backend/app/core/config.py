@@ -1,13 +1,15 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-from typing import List
+from typing import List, Union
+from pydantic import field_validator
+import json
 
 
 class Settings(BaseSettings):
     APP_NAME: str = "LiveClick AI"
     DEBUG: bool = False
     SECRET_KEY: str = "change-me-in-production"
-    ALLOWED_ORIGINS: List[str] = ["https://liveclick.ai", "http://localhost:3000"]
+    ALLOWED_ORIGINS: Union[List[str], str] = ["https://liveclick.ai", "http://localhost:3000"]
 
     # Supabase
     SUPABASE_URL: str = ""
@@ -36,6 +38,16 @@ class Settings(BaseSettings):
     # Pricing (kopecks)
     PRICE_PRO_MONTHLY: int = 14900
     PRICE_STUDIO_MONTHLY: int = 49900
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return [origin.strip() for origin in v.split(",")]
+        return v
 
     class Config:
         env_file = ".env"
