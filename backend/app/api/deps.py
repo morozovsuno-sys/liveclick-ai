@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status, Header
+from fastapi import Depends, HTTPException, status, Header, Request
 from app.core.database import get_supabase_admin
 from typing import Optional
 import logging
@@ -58,54 +58,29 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
         logger.error(f"Auth error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ошибка аутентификации",
+            detail="Ошибка автентификации",
         )
 
 
 async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """
-    Middleware: проверяет что юзер — админ.
-    Использование:
-        @router.get("/admin/stats", dependencies=[Depends(require_admin)])
-    """
+    """Проверяет что пользователь является админом."""
     profile = current_user.get("profile", {})
-    
     if not profile.get("is_admin", False):
-        logger.warning(
-            f"Unauthorized admin access attempt by user {current_user['id']}"
-        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ запрещён: требуются права администратора",
+            detail="Недостаточно прав доступа",
         )
-
     return current_user
 
 
-async def log_admin_action(
-    admin_id: str,
-    action: str,
-    target_user_id: Optional[str] = None,
-    metadata: Optional[dict] = None,
-    ip_address: Optional[str] = None,
-):
-    """
-    Записывает действие админа в admin_logs таблицу.
-    """
-    supabase = get_supabase_admin()
-    
+async def log_admin_action(action: str, user_id: str, details: dict = None):
+    """Логирование административных действий."""
     try:
+        supabase = get_supabase_admin()
         supabase.table("admin_logs").insert({
-            "admin_id": admin_id,
+            "admin_id": user_id,
             "action": action,
-            "target_user_id": target_user_id,
-            "metadata": metadata or {},
-            "ip_address": ip_address,
+            "details": details or {},
         }).execute()
-        
-        logger.info(
-            f"Admin action logged: {action} by {admin_id} "
-            f"(target: {target_user_id or 'N/A'})"
-        )
     except Exception as e:
-        logger.error(f"Failed to log admin action: {e}")
+        logger.error(f"Admin log error: {e}")
