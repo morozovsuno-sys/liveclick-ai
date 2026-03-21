@@ -1,13 +1,13 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-from typing import list
+from typing import List
 
 
 class Settings(BaseSettings):
     APP_NAME: str = "LiveClick AI"
     DEBUG: bool = False
     SECRET_KEY: str = "change-me-in-production"
-    ALLOWED_ORIGINS: list[str] = ["https://liveclick.ai", "http://localhost:3000"]
+    ALLOWED_ORIGINS: List[str] = ["https://liveclick.ai", "http://localhost:3000"]
 
     # Supabase
     SUPABASE_URL: str = ""
