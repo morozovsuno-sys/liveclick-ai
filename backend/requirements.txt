@@ -10,5 +10,5 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 numpy==1.26.4
 gunicorn==22.0.0
-spleeter==2.4.0
+spleeter==2.4.2
 
