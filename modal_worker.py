@@ -101,7 +101,8 @@ def process_track(audio_bytes: bytes, job_id: str, mode: str = "premium") -> dic
 
     # ===== STEP 6: Upload to R2 =====
     stem_urls = _upload_to_r2(final_stems, job_id)
-    results["stems"] = stem_urls
+        results["stems"] = {k: v for k, v in stem_urls.items() if k != "click"}
+        results["click_track_url"] = stem_urls.get("click")
 
     return results
 
