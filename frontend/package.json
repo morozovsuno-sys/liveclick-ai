@@ -23,7 +23,9 @@
     "@radix-ui/react-toast": "^1.2.1",
     "lucide-react": "^0.400.0",
     "clsx": "^2.1.1",
-    "tailwind-merge": "^2.4.0"
+    "tailwind-merge": "^2.4.0",
+    "sonner": "^1.5.0",
+    "date-fns": "^3.6.0"
   },
   "devDependencies": {
     "@types/node": "^20",
