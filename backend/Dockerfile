@@ -27,21 +27,14 @@ COPY . .
 # Create tmp dir for audio processing and set cache dir
 RUN mkdir -p /tmp/audio /root/.cache/torch
 # Pre-download htdemucs model at build time
-RUN python -c "
-import os
-os.environ['TORCH_HOME'] = '/root/.cache/torch'
-os.environ['OMP_NUM_THREADS'] = '1'
-from demucs.pretrained import get_model
-get_model('htdemucs')
-print('htdemucs model downloaded successfully')
-"
+RUN python -c "import os; os.environ['TORCH_HOME']='/root/.cache/torch'; os.environ['OMP_NUM_THREADS']='1'; from demucs.pretrained import get_model; get_model('htdemucs'); print('htdemucs model downloaded successfully')"
 
 EXPOSE 8000
 
 # Set env for minimal memory usage
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
-ENV TORCH_HOME=/root/.cache/torch
+ENV TORCH_NUM_THREADS=1
+ENV MALLOC_TRIM_THRESHOLD_=100000
 
-# Production: gunicorn with uvicorn workers, use $PORT from Railway
-CMD gunicorn app.main:app -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --timeout 1800 --graceful-timeout 30
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "30", "--graceful-timeout", "30"]
