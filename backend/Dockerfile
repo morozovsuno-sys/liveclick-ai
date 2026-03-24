@@ -24,23 +24,15 @@ RUN pip install --no-cache-dir -r requirements.txt --ignore-installed torch torc
 
 COPY . .
 
-# Create tmp dir for audio processing
-RUN mkdir -p /tmp/audio
-
-# Pre-download Demucs htdemucs model weights at build time
-# Use || true so build doesn't fail if network is unavailable (will download at runtime)
-RUN python -c "
-import os
-os.environ['TORCH_HOME'] = '/root/.cache/torch'
-try:
-    from demucs.pretrained import get_model
-    get_model('htdemucs')
-    print('Model htdemucs pre-downloaded successfully')
-except Exception as e:
-    print(f'Pre-download failed (will download at runtime): {e}')
-" || true
+# Create tmp dir for audio processing and set cache dir
+RUN mkdir -p /tmp/audio /root/.cache/torch
 
 EXPOSE 8000
+
+# Set env for minimal memory usage
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV TORCH_HOME=/root/.cache/torch
 
 # Production: gunicorn with uvicorn workers
 CMD ["gunicorn", "app.main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "1800", "--graceful-timeout", "30"]
