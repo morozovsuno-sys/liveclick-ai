@@ -16,12 +16,12 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 # Thread pool for CPU-bound Demucs tasks
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=1)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"LiveClick AI backend started (free mode: local Demucs + Supabase Storage)")
+    print("LiveClick AI backend started (free mode: local Demucs + Supabase Storage)")
     yield
     print("Shutdown")
     _executor.shutdown(wait=False)
@@ -33,6 +33,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if True else None,
 )
+
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
@@ -52,11 +53,8 @@ app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 def _run_demucs_sync(audio_bytes: bytes, job_id: str) -> dict:
     """Run Demucs locally (CPU) and upload stems to Supabase Storage."""
     import soundfile as sf
-    import librosa
     import numpy as np
     from supabase import create_client
-    from pydub import AudioSegment
-    from pydub.generators import Sine
 
     supabase_url = os.environ["SUPABASE_URL"]
     supabase_key = os.environ["SUPABASE_SERVICE_KEY"]
@@ -67,163 +65,114 @@ def _run_demucs_sync(audio_bytes: bytes, job_id: str) -> dict:
     input_path = tmp_dir / "input.wav"
     input_path.write_bytes(audio_bytes)
 
-    # --- Demucs separation (htdemucs, 4-stem, CPU) ---
+    # --- Demucs separation (htdemucs, 2-stem vocals/no-vocals, CPU) ---
     out_dir = tmp_dir / "demucs_out"
     out_dir.mkdir(exist_ok=True)
+
+    # Use cached model dir set at build time
+    cache_dir = os.environ.get("TORCH_HOME", "/root/.cache/torch")
+
     cmd = [
         "python", "-m", "demucs",
         "-n", "htdemucs",
         "--two-stems", "vocals",
         "-o", str(out_dir),
-        "--mp3",
+        "--device", "cpu",
+        "--segment", "7",
+        "--jobs", "1",
         str(input_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+
+    env = os.environ.copy()
+    env["TORCH_HOME"] = cache_dir
+    env["OMP_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        env=env,
+    )
+
     if result.returncode != 0:
-        raise RuntimeError(f"Demucs failed: {result.stderr}")
+        raise RuntimeError(f"Demucs failed: {result.stderr[-2000:]}")
 
-    # Collect stems
-    stem_names = ["vocals", "no_vocals"]
+    # Find output stems
+    stem_dir = out_dir / "htdemucs" / "input"
     stems = {}
-    for name in stem_names:
-        found = list(out_dir.rglob(f"{name}.mp3")) + list(out_dir.rglob(f"{name}.wav"))
-        if found:
-            stems[name] = str(found[0])
+    for stem_file in stem_dir.glob("*.wav"):
+        stem_name = stem_file.stem  # vocals or no_vocals
+        with open(stem_file, "rb") as f:
+            stem_bytes = f.read()
 
-    # Also try htdemucs full 4-stem output
-    for name in ["drums", "bass", "other"]:
-        found = list(out_dir.rglob(f"{name}.mp3")) + list(out_dir.rglob(f"{name}.wav"))
-        if found:
-            stems[name] = str(found[0])
-
-    # --- BPM detection ---
-    ref_audio = stems.get("vocals", str(input_path))
-    try:
-        y, sr = librosa.load(ref_audio, mono=True, duration=60)
-        bpms = []
-        for hop in [256, 512, 1024]:
-            bpm, _ = librosa.beat.beat_track(y=y, sr=sr, hop_length=hop, trim=False)
-            bpms.append(float(bpm))
-        bpm = float(np.median(bpms))
-    except Exception:
-        bpm = 120.0
-
-    # --- Generate click track ---
-    click_path = str(tmp_dir / "click.wav")
-    try:
-        beat_ms = int(60000 / bpm)
-        total_ms = int(len(y) / sr * 1000)
-        hi = Sine(880).to_audio_segment(duration=50).apply_gain(-10)
-        lo = Sine(660).to_audio_segment(duration=50).apply_gain(-12)
-        click_track = AudioSegment.silent(duration=total_ms + 4 * beat_ms)
-        t, beat_num = 0, 0
-        while t < len(click_track):
-            click = hi if beat_num % 4 == 0 else lo
-            click_track = click_track.overlay(click, position=t)
-            t += beat_ms
-            beat_num += 1
-        click_track.export(click_path, format="wav")
-        stems["click"] = click_path
-    except Exception as e:
-        print(f"Click generation failed: {e}")
-
-    # --- Upload to Supabase Storage ---
-    bucket = os.environ.get("SUPABASE_STORAGE_BUCKET", "stems")
-    stem_urls = {}
-    for stem_name, file_path in stems.items():
-        if not Path(file_path).exists():
-            continue
-        ext = Path(file_path).suffix
-        storage_key = f"{job_id}/{stem_name}{ext}"
-        with open(file_path, "rb") as f:
-            file_data = f.read()
-        content_type = "audio/mpeg" if ext == ".mp3" else "audio/wav"
-        supabase.storage.from_(bucket).upload(
-            storage_key,
-            file_data,
-            {"content-type": content_type, "upsert": "true"},
+        storage_path = f"{job_id}/{stem_name}.wav"
+        supabase.storage.from_("stems").upload(
+            storage_path,
+            stem_bytes,
+            {"content-type": "audio/wav"},
         )
-        public_url = supabase.storage.from_(bucket).get_public_url(storage_key)
-        stem_urls[stem_name] = public_url
 
-    return {
-        "stems": {k: v for k, v in stem_urls.items() if k != "click"},
-        "click_track_url": stem_urls.get("click"),
-        "bpm": round(bpm, 1),
-    }
+        public_url = supabase.storage.from_("stems").get_public_url(storage_path)
+        stems[stem_name] = public_url
+
+    # Cleanup
+    import shutil
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return stems
 
 
-async def _process_job_background(audio_bytes: bytes, job_id: str):
-    """Run in thread pool, update Supabase job record on completion."""
-    supabase = get_supabase_admin()
+async def run_demucs(audio_bytes: bytes, job_id: str) -> dict:
     loop = asyncio.get_event_loop()
-    try:
-        result = await loop.run_in_executor(_executor, _run_demucs_sync, audio_bytes, job_id)
-        supabase.table("jobs").update({
-            "status": "completed",
-            "stems": result.get("stems"),
-            "click_track_url": result.get("click_track_url"),
-            "bpm": result.get("bpm"),
-        }).eq("id", job_id).execute()
-    except Exception as e:
-        supabase.table("jobs").update({
-            "status": "failed",
-            "error": str(e),
-        }).eq("id", job_id).execute()
+    return await loop.run_in_executor(_executor, _run_demucs_sync, audio_bytes, job_id)
 
 
 @app.post("/api/split")
 async def split_audio(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
-    """Upload audio file and run local Demucs stem separation (free, no GPU)."""
-    if not file.content_type or not file.content_type.startswith("audio/"):
-        allowed_ext = [".mp3", ".wav", ".flac", ".m4a"]
-        filename_lower = (file.filename or "").lower()
-        if not any(filename_lower.endswith(ext) for ext in allowed_ext):
-            raise HTTPException(status_code=400, detail="Unsupported format. Use MP3, WAV, FLAC or M4A.")
+    """Upload audio and split into stems using local Demucs (free)."""
+    if file.content_type not in ["audio/wav", "audio/mpeg", "audio/mp3", "audio/x-wav", "audio/wave", "audio/flac", "audio/ogg"]:
+        # Allow any audio type - just check size
+        pass
+
+    audio_bytes = await file.read()
+    if len(audio_bytes) > 50 * 1024 * 1024:  # 50MB limit
+        raise HTTPException(status_code=413, detail="File too large. Max 50MB.")
 
     job_id = str(uuid.uuid4())
-    supabase = get_supabase_admin()
+    supabase_admin = get_supabase_admin()
 
-    supabase.table("jobs").insert({
+    # Create job record
+    supabase_admin.table("jobs").insert({
         "id": job_id,
         "user_id": current_user["id"],
         "status": "processing",
-        "original_filename": file.filename,
+        "filename": file.filename or "audio.wav",
     }).execute()
 
-    audio_bytes = await file.read()
+    # Run Demucs in background
+    async def process():
+        try:
+            stems = await run_demucs(audio_bytes, job_id)
+            supabase_admin.table("jobs").update({
+                "status": "done",
+                "stems": stems,
+            }).eq("id", job_id).execute()
+        except Exception as e:
+            supabase_admin.table("jobs").update({
+                "status": "error",
+                "error": str(e)[:500],
+            }).eq("id", job_id).execute()
 
-    # Start background processing (non-blocking)
-    asyncio.create_task(_process_job_background(audio_bytes, job_id))
+    asyncio.create_task(process())
 
     return {"job_id": job_id, "status": "processing"}
 
 
-@app.get("/api/jobs/{job_id}/status")
-async def get_job_status(
-    job_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Poll job status — returns stem URLs when complete."""
-    supabase = get_supabase_admin()
-    result = supabase.table("jobs").select("*").eq("id", job_id).eq("user_id", current_user["id"]).single().execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Job not found")
-    job = result.data
-    return {
-        "job_id": job_id,
-        "status": job["status"],
-        "stems": job.get("stems"),
-        "click_track_url": job.get("click_track_url"),
-        "bpm": job.get("bpm"),
-        "original_filename": job.get("original_filename"),
-        "error": job.get("error"),
-    }
-
-
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "LiveClick AI"}
+    return {"status": "ok", "mode": "free (local Demucs + Supabase Storage)"}
