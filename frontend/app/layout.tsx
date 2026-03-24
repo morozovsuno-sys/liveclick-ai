@@ -7,7 +7,7 @@ import { cookies } from 'next/headers'
 const inter = Inter({ subsets: ['latin', 'cyrillic'] })
 
 export const metadata: Metadata = {
-  title: 'LiveClick AI — AI Stem Splitter для музыкантов',
+    title: 'LiveClic AI — AI Stem Splitter для музыкантов',
   description: 'Разделяй треки на стемы, получай click track и BPM за 40-120 секунд. YooKassa, RuTube.',
 }
 
