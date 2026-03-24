@@ -1,4 +1,11 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://liveclick-ai-production.up.railway.app'
+import axios from 'axios';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://liveclick-ai-production.up.railway.app';
+
+export const api = axios.create({
+  baseURL: API_URL,
+  withCredentials: false,
+});
 
 export async function uploadTrack(file: File, token: string) {
   const form = new FormData()
