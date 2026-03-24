@@ -26,6 +26,15 @@ COPY . .
 
 # Create tmp dir for audio processing and set cache dir
 RUN mkdir -p /tmp/audio /root/.cache/torch
+# Pre-download htdemucs model at build time
+RUN python -c "
+import os
+os.environ['TORCH_HOME'] = '/root/.cache/torch'
+os.environ['OMP_NUM_THREADS'] = '1'
+from demucs.pretrained import get_model
+get_model('htdemucs')
+print('htdemucs model downloaded successfully')
+"
 
 EXPOSE 8000
 
