@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir --no-deps spleeter==2.4.2 && \
         typer==0.4.2 \
         soundfile \
         llvmlite \
-        numba
+        numba \
+        pandas
 
 COPY . .
 
