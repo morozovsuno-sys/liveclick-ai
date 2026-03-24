@@ -8,6 +8,8 @@ from app.api.routes import admin
 from app.api.deps import get_current_user
 from app.core.database import get_supabase_admin
 import uuid
+import os
+import modal
 
 
 @asynccontextmanager
@@ -15,7 +17,6 @@ async def lifespan(app: FastAPI):
     print(f"LiveClick AI backend started")
     yield
     print("Shutdown")
-
 
 app = FastAPI(
     title="LiveClick AI",
@@ -40,23 +41,34 @@ app.include_router(payments.router,  prefix="/api/payments", tags=["payments"])
 app.include_router(admin.router,     prefix="/api/admin",    tags=["admin"])
 
 
+def _get_modal_func():
+    """Lazily load Modal function using API token from env vars."""
+    token_id = os.environ.get("MODAL_TOKEN_ID")
+    token_secret = os.environ.get("MODAL_TOKEN_SECRET")
+    if not token_id or not token_secret:
+        raise HTTPException(status_code=503, detail="Modal credentials not configured")
+    modal.config._profile.token_id = token_id
+    modal.config._profile.token_secret = token_secret
+    process_track = modal.Function.lookup("liveclick-ai", "process_track")
+    return process_track
+
+
 @app.post("/api/split")
 async def split_audio(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user)
 ):
-    """Загрузить аудиофайл и запустить обработку стемов."""
+    """Upload audio file and trigger Modal GPU stem separation."""
     if not file.content_type or not file.content_type.startswith("audio/"):
-        # Также допускаем application/octet-stream для некоторых клиентов
         allowed_ext = [".mp3", ".wav", ".flac", ".m4a"]
         filename_lower = (file.filename or "").lower()
         if not any(filename_lower.endswith(ext) for ext in allowed_ext):
-            raise HTTPException(status_code=400, detail="Неподдерживаемый формат файла. Используйте MP3, WAV, FLAC или M4A.")
+            raise HTTPException(status_code=400, detail="Unsupported format. Use MP3, WAV, FLAC or M4A.")
 
     job_id = str(uuid.uuid4())
     supabase = get_supabase_admin()
 
-    # Создаём задачу в БД
+    # Create job record
     supabase.table("jobs").insert({
         "id": job_id,
         "user_id": current_user["id"],
@@ -64,8 +76,66 @@ async def split_audio(
         "filename": file.filename,
     }).execute()
 
-    # TODO: отправить задачу в Celery worker
-    return {"job_id": job_id, "status": "queued"}
+    # Read audio bytes
+    audio_bytes = await file.read()
+
+    # Trigger Modal GPU worker asynchronously
+    try:
+        process_track = _get_modal_func()
+        # Spawn async job - non-blocking
+        call = process_track.spawn(audio_bytes, job_id, "premium")
+        # Update job with Modal call_id for polling
+        supabase.table("jobs").update({
+            "status": "processing",
+            "modal_call_id": call.object_id,
+        }).eq("id", job_id).execute()
+    except Exception as e:
+        supabase.table("jobs").update({
+            "status": "error",
+            "error_message": str(e),
+        }).eq("id", job_id).execute()
+        raise HTTPException(status_code=500, detail=f"Failed to start processing: {e}")
+
+    return {"job_id": job_id, "status": "processing"}
+
+
+@app.get("/api/jobs/{job_id}/status")
+async def get_job_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Poll job status - returns stems URLs when complete."""
+    supabase = get_supabase_admin()
+    result = supabase.table("jobs").select("*").eq("id", job_id).eq("user_id", current_user["id"]).single().execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = result.data
+    # If processing, check Modal for completion
+    if job["status"] == "processing" and job.get("modal_call_id"):
+        try:
+            process_track = _get_modal_func()
+            call = modal.functions.FunctionCall.from_id(job["modal_call_id"])
+            modal_result = call.get(timeout=0)  # non-blocking
+            # Job completed
+            supabase.table("jobs").update({
+                "status": "done",
+                "result": modal_result,
+                "bpm": modal_result.get("bpm"),
+            }).eq("id", job_id).execute()
+            return {"job_id": job_id, "status": "done", "result": modal_result}
+        except TimeoutError:
+            pass  # Still processing
+        except Exception as e:
+            supabase.table("jobs").update({"status": "error", "error_message": str(e)}).eq("id", job_id).execute()
+
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "result": job.get("result"),
+        "bpm": job.get("bpm"),
+        "filename": job.get("filename"),
+    }
 
 
 @app.get("/health")
