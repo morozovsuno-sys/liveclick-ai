@@ -2,10 +2,20 @@ import axios from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://liveclick-ai-production.up.railway.app';
 
-export const api = axios.create({
+const axiosInstance = axios.create({
   baseURL: API_URL,
   withCredentials: false,
 });
+
+// Return data directly so callers can do `res.users` instead of `res.data.users`
+axiosInstance.interceptors.response.use((response) => response.data);
+
+export const api = axiosInstance as unknown as {
+  get: (url: string, config?: object) => Promise<any>;
+  post: (url: string, data?: unknown, config?: object) => Promise<any>;
+  put: (url: string, data?: unknown, config?: object) => Promise<any>;
+  delete: (url: string, config?: object) => Promise<any>;
+};
 
 export async function uploadTrack(file: File, token: string) {
   const form = new FormData()
