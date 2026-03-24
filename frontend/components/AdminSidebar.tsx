@@ -11,15 +11,19 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
+interface AdminSidebarProps {
+  active?: string;
+}
+
 const navItems = [
-  { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/admin/users', label: 'Users', icon: Users },
-  { href: '/admin/billing', label: 'Billing', icon: CreditCard },
-  { href: '/admin/activity', label: 'Activity', icon: Activity },
-  { href: '/admin/security', label: 'Security', icon: ShieldAlert },
+  { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, key: 'dashboard' },
+  { href: '/admin/users', label: 'Users', icon: Users, key: 'users' },
+  { href: '/admin/billing', label: 'Billing', icon: CreditCard, key: 'billing' },
+  { href: '/admin/activity', label: 'Activity', icon: Activity, key: 'activity' },
+  { href: '/admin/security', label: 'Security', icon: ShieldAlert, key: 'security' },
 ];
 
-export function AdminSidebar() {
+export function AdminSidebar({ active }: AdminSidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -30,7 +34,7 @@ export function AdminSidebar() {
       <nav className="flex-1 p-4 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href;
+          const isActive = active ? active === item.key : pathname === item.href;
           return (
             <Link
               key={item.href}
