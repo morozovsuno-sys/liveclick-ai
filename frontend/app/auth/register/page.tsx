@@ -1,5 +1,7 @@
 'use client'
 import { useState } from 'react'
+
+export const dynamic = 'force-dynamic';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
