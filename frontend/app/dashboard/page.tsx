@@ -1,18 +1,13 @@
 'use client'
-
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-dynamic'
 import { useState, useCallback } from 'react'
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { useRouter } from 'next/navigation'
 import { useDropzone } from 'react-dropzone'
-import axios from 'axios'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export default function DashboardPage() {
   const [uploading, setUploading] = useState(false)
-  const [jobId, setJobId] = useState<string | null>(null)
-  const [jobStatus, setJobStatus] = useState<any>(null)
+  const [uploadedFile, setUploadedFile] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<'upload' | 'history' | 'profile'>('upload')
   const supabase = createClientComponentClient()
@@ -25,34 +20,26 @@ export default function DashboardPage() {
     setError('')
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      const formData = new FormData()
-      formData.append('file', file)
-      const res = await axios.post(`${API_URL}/api/split`, formData, {
-        headers: { Authorization: `Bearer ${session?.access_token}`, 'Content-Type': 'multipart/form-data' }
-      })
-      setJobId(res.data.job_id)
-      pollStatus(res.data.job_id, session?.access_token)
+      if (!session) {
+        setError('Не авторизован')
+        setUploading(false)
+        return
+      }
+      const userId = session.user.id
+      const fileName = `${userId}/${Date.now()}_${file.name}`
+      const { data, error: uploadError } = await supabase.storage
+        .from('tracks')
+        .upload(fileName, file, { upsert: false })
+      if (uploadError) {
+        setError(uploadError.message)
+      } else {
+        setUploadedFile(data?.path || fileName)
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка загрузки')
+      setError(err.message || 'Ошибка загрузки')
     }
     setUploading(false)
   }, [supabase])
-
-  const pollStatus = async (id: string, token?: string) => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await axios.get(`${API_URL}/api/jobs/${id}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        setJobStatus(res.data)
-        if (res.data.status === 'done' || res.data.status === 'failed') {
-          clearInterval(interval)
-        }
-      } catch (err) {
-        clearInterval(interval)
-      }
-    }, 3000)
-  }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, accept: { 'audio/*': ['.mp3', '.wav', '.flac', '.m4a'] }, maxFiles: 1
@@ -65,7 +52,6 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 flex">
-      {/* Sidebar */}
       <aside className="w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
         <div className="p-6 border-b border-gray-700">
           <span className="text-2xl">🎵</span>
@@ -93,8 +79,6 @@ export default function DashboardPage() {
           </button>
         </div>
       </aside>
-
-      {/* Main content */}
       <main className="flex-1 p-8">
         {activeTab === 'upload' && (
           <div>
@@ -113,58 +97,22 @@ export default function DashboardPage() {
               <p className="text-gray-500">MP3, WAV, FLAC, M4A • до 100 МБ</p>
               {uploading && <p className="text-purple-400 mt-4 animate-pulse">Загрузка...</p>}
             </div>
-
             {error && <div className="mt-4 bg-red-900/30 border border-red-700 text-red-300 p-4 rounded-xl">{error}</div>}
-
-            {jobStatus && (
-              <div className="mt-8 bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <h2 className="text-xl font-semibold text-white mb-4">Статус обработки</h2>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className={`w-3 h-3 rounded-full ${
-                    jobStatus.status === 'done' ? 'bg-green-400' : 
-                    jobStatus.status === 'failed' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'
-                  }`} />
-                  <span className="text-gray-300 capitalize">{jobStatus.status}</span>
-                </div>
-                {jobStatus.status === 'done' && jobStatus.stems && (
-                  <div>
-                    <h3 className="text-white font-medium mb-3">Стемы:</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      {Object.entries(jobStatus.stems).map(([stem, url]: [string, any]) => (
-                        <a key={stem} href={url} download
-                          className="flex items-center gap-2 bg-gray-700 rounded-lg px-4 py-3 text-gray-300 hover:text-white hover:bg-gray-600 transition">
-                          <span>↓</span>
-                          <span className="capitalize">{stem}</span>
-                        </a>
-                      ))}
-                    </div>
-                    {jobStatus.bpm && (
-                      <div className="mt-4 flex gap-4">
-                        <div className="bg-purple-900/30 border border-purple-700 rounded-lg px-4 py-2">
-                          <span className="text-purple-300">🥁 BPM: {jobStatus.bpm}</span>
-                        </div>
-                        {jobStatus.click_track_url && (
-                          <a href={jobStatus.click_track_url} download
-                            className="bg-green-900/30 border border-green-700 rounded-lg px-4 py-2 text-green-300 hover:text-green-200 transition">
-                            ↓ Click Track
-                          </a>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+            {uploadedFile && (
+              <div className="mt-8 bg-gray-800 rounded-2xl p-6 border border-green-700">
+                <h2 className="text-xl font-semibold text-white mb-2">✅ Файл загружен</h2>
+                <p className="text-green-400 text-sm break-all">{uploadedFile}</p>
+                <p className="text-gray-400 mt-3">Трек принят в обработку. Результаты появятся в разделе "Мои обработки".</p>
               </div>
             )}
           </div>
         )}
-
         {activeTab === 'history' && (
           <div>
             <h1 className="text-3xl font-bold text-white mb-8">Мои обработки</h1>
             <div className="text-gray-400">История загрузок будет здесь</div>
           </div>
         )}
-
         {activeTab === 'profile' && (
           <div>
             <h1 className="text-3xl font-bold text-white mb-8">Личный кабинет</h1>
