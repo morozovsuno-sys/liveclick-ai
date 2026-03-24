@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining dependencies
-RUN pip install --no-cache-dir -r requirements.txt --no-deps --ignore-installed torch torchaudio || \
+RUN pip install --no-cache-dir -r requirements.txt --ignore-installed torch torchaudio 2>/dev/null || \
     pip install --no-cache-dir $(grep -v 'torch' requirements.txt | tr '\n' ' ')
 
 COPY . .
@@ -28,14 +28,17 @@ COPY . .
 RUN mkdir -p /tmp/audio
 
 # Pre-download Demucs htdemucs model weights at build time
-# This avoids downloading at runtime and speeds up first request
+# Use || true so build doesn't fail if network is unavailable (will download at runtime)
 RUN python -c "
 import os
 os.environ['TORCH_HOME'] = '/root/.cache/torch'
-from demucs.pretrained import get_model
-get_model('htdemucs')
-print('Model htdemucs pre-downloaded successfully')
-"
+try:
+    from demucs.pretrained import get_model
+    get_model('htdemucs')
+    print('Model htdemucs pre-downloaded successfully')
+except Exception as e:
+    print(f'Pre-download failed (will download at runtime): {e}')
+" || true
 
 EXPOSE 8000
 
