@@ -1,8 +1,11 @@
-'use client'
-import { useState } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+'use client';
+
+export const dynamic = 'force-dynamic';
+
+import { useState } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -57,18 +60,18 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-lg font-semibold transition disabled:opacity-50"
+            className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition-colors disabled:opacity-50"
           >
-            {loading ? 'Вхожу...' : 'Войти'}
+            {loading ? 'Входим...' : 'Войти'}
           </button>
         </form>
-        <p className="text-center text-gray-400 mt-6">
+        <p className="text-center text-gray-400 mt-4">
           Нет аккаунта?{' '}
-          <Link href="/auth/register" className="text-purple-400 hover:text-purple-300">
+          <Link href="/auth/register" className="text-purple-400 hover:underline">
             Зарегистрироваться
           </Link>
         </p>
       </div>
     </div>
-  )
+  );
 }
