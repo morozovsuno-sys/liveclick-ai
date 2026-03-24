@@ -27,7 +27,17 @@ COPY . .
 # Create tmp dir for audio processing
 RUN mkdir -p /tmp/audio
 
+# Pre-download Demucs htdemucs model weights at build time
+# This avoids downloading at runtime and speeds up first request
+RUN python -c "
+import os
+os.environ['TORCH_HOME'] = '/root/.cache/torch'
+from demucs.pretrained import get_model
+get_model('htdemucs')
+print('Model htdemucs pre-downloaded successfully')
+"
+
 EXPOSE 8000
 
 # Production: gunicorn with uvicorn workers
-CMD ["sh", "-c", "gunicorn app.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --timeout 1800"]
+CMD ["gunicorn", "app.main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "1800", "--graceful-timeout", "30"]
