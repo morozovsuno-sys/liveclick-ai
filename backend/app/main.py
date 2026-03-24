@@ -24,7 +24,6 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if True else None,
 )
-
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
@@ -33,12 +32,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.include_router(auth.router,      prefix="/api/auth",     tags=["auth"])
-app.include_router(profiles.router,  prefix="/api/profiles", tags=["profiles"])
-app.include_router(jobs.router,      prefix="/api/jobs",     tags=["jobs"])
-app.include_router(payments.router,  prefix="/api/payments", tags=["payments"])
-app.include_router(admin.router,     prefix="/api/admin",    tags=["admin"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(profiles.router, prefix="/api/profiles", tags=["profiles"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 
 def _get_modal_func():
@@ -47,8 +45,8 @@ def _get_modal_func():
     token_secret = os.environ.get("MODAL_TOKEN_SECRET")
     if not token_id or not token_secret:
         raise HTTPException(status_code=503, detail="Modal credentials not configured")
-    modal.config._profile.token_id = token_id
-    modal.config._profile.token_secret = token_secret
+    os.environ["MODAL_TOKEN_ID"] = token_id
+    os.environ["MODAL_TOKEN_SECRET"] = token_secret
     process_track = modal.Function.lookup("liveclick-ai", "process_track")
     return process_track
 
@@ -68,12 +66,12 @@ async def split_audio(
     job_id = str(uuid.uuid4())
     supabase = get_supabase_admin()
 
-    # Create job record
+    # Create job record with correct column names
     supabase.table("jobs").insert({
         "id": job_id,
         "user_id": current_user["id"],
-        "status": "queued",
-        "filename": file.filename,
+        "status": "pending",
+        "original_filename": file.filename,
     }).execute()
 
     # Read audio bytes
@@ -87,12 +85,12 @@ async def split_audio(
         # Update job with Modal call_id for polling
         supabase.table("jobs").update({
             "status": "processing",
-            "modal_call_id": call.object_id,
+            "modal_job_id": call.object_id,
         }).eq("id", job_id).execute()
     except Exception as e:
         supabase.table("jobs").update({
-            "status": "error",
-            "error_message": str(e),
+            "status": "failed",
+            "error": str(e),
         }).eq("id", job_id).execute()
         raise HTTPException(status_code=500, detail=f"Failed to start processing: {e}")
 
@@ -109,32 +107,41 @@ async def get_job_status(
     result = supabase.table("jobs").select("*").eq("id", job_id).eq("user_id", current_user["id"]).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Job not found")
-
     job = result.data
+
     # If processing, check Modal for completion
-    if job["status"] == "processing" and job.get("modal_call_id"):
+    if job["status"] == "processing" and job.get("modal_job_id"):
         try:
             process_track = _get_modal_func()
-            call = modal.functions.FunctionCall.from_id(job["modal_call_id"])
+            call = modal.functions.FunctionCall.from_id(job["modal_job_id"])
             modal_result = call.get(timeout=0)  # non-blocking
-            # Job completed
+            # Job completed - store stems and click_track_url
             supabase.table("jobs").update({
-                "status": "done",
-                "result": modal_result,
+                "status": "completed",
+                "stems": modal_result.get("stems"),
+                "click_track_url": modal_result.get("click_track_url"),
                 "bpm": modal_result.get("bpm"),
             }).eq("id", job_id).execute()
-            return {"job_id": job_id, "status": "done", "result": modal_result}
+            return {
+                "job_id": job_id,
+                "status": "completed",
+                "stems": modal_result.get("stems"),
+                "click_track_url": modal_result.get("click_track_url"),
+                "bpm": modal_result.get("bpm"),
+            }
         except TimeoutError:
             pass  # Still processing
         except Exception as e:
-            supabase.table("jobs").update({"status": "error", "error_message": str(e)}).eq("id", job_id).execute()
+            supabase.table("jobs").update({"status": "failed", "error": str(e)}).eq("id", job_id).execute()
 
     return {
         "job_id": job_id,
         "status": job["status"],
-        "result": job.get("result"),
+        "stems": job.get("stems"),
+        "click_track_url": job.get("click_track_url"),
         "bpm": job.get("bpm"),
-        "filename": job.get("filename"),
+        "original_filename": job.get("original_filename"),
+        "error": job.get("error"),
     }
 
 
