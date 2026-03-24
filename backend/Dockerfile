@@ -24,7 +24,8 @@ RUN pip install --no-cache-dir --no-deps spleeter==2.4.2 && \
         soundfile \
         llvmlite \
         numba \
-        pandas
+        pandas \
+        ffmpeg-python
 
 COPY . .
 
