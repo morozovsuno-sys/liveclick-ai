@@ -1,0 +1,29 @@
+name: Deploy Modal Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'modal_worker.py'
+      - '.github/workflows/deploy-modal.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Modal
+        run: pip install modal>=0.64.0
+
+      - name: Deploy Modal worker
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy modal_worker.py
