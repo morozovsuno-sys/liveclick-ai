@@ -34,5 +34,5 @@ ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV TORCH_HOME=/root/.cache/torch
 
-# Production: gunicorn with uvicorn workers
-CMD ["gunicorn", "app.main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "1800", "--graceful-timeout", "30"]
+# Production: gunicorn with uvicorn workers, use $PORT from Railway
+CMD gunicorn app.main:app -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --timeout 1800 --graceful-timeout 30
